@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Arduino Radar</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        background: #020806;
+        color: #00ff66;
+        font-family: Arial, sans-serif;
+        text-align: center;
+        overflow-x: hidden;
+    }
+
+    h1 {
+        margin: 15px 0 5px;
+        font-size: 28px;
+        letter-spacing: 3px;
+    }
+
+    #status {
+        color: #00ff66;
+        margin-bottom: 10px;
+        font-size: 14px;
+    }
+
+    .radar-container {
+        width: 95vw;
+        max-width: 650px;
+        margin: auto;
+        position: relative;
+    }
+
+    canvas {
+        width: 100%;
+        height: auto;
+        display: block;
+        background: #00150b;
+        border: 2px solid #00ff66;
+        border-radius: 50%;
+        box-shadow: 0 0 25px #00ff6644;
+    }
+
+    .info {
+        display: flex;
+        justify-content: center;
+        gap: 30px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+    }
+
+    .box {
+        border: 1px solid #00ff66;
+        padding: 10px 20px;
+        min-width: 120px;
+        background: #00150b;
+        border-radius: 8px;
+    }
+
+    .label {
+        font-size: 12px;
+        color: #75ff9f;
+    }
+
+    .value {
+        font-size: 22px;
+        font-weight: bold;
+        margin-top: 4px;
+    }
+
+    button {
+        margin: 18px 5px;
+        padding: 12px 20px;
+        border: 1px solid #00ff66;
+        background: #002b16;
+        color: #00ff66;
+        border-radius: 7px;
+        font-size: 15px;
+        cursor: pointer;
+    }
+
+    button:hover {
+        background: #004522;
+    }
+
+    .legend {
+        margin-top: 5px;
+        font-size: 13px;
+    }
+
+    .green {
+        color: #00ff66;
+    }
+
+    .red {
+        color: #ff3333;
+    }
+</style>
+</head>
+
+<body>
+
+<h1>ARDUINO RADAR</h1>
+
+<div id="status">● SYSTEM READY</div>
+
+<div class="radar-container">
+    <canvas id="radar" width="700" height="700"></canvas>
+</div>
+
+<div class="info">
+
+    <div class="box">
+        <div class="label">ANGLE</div>
+        <div class="value" id="angle">0°</div>
+    </div>
+
+    <div class="box">
+        <div class="label">DISTANCE</div>
+        <div class="value" id="distance">-- cm</div>
+    </div>
+
+    <div class="box">
+        <div class="label">OBJECT</div>
+        <div class="value" id="object">NONE</div>
+    </div>
+
+</div>
+
+<div>
+    <button onclick="startRadar()">START RADAR</button>
+    <button onclick="stopRadar()">STOP RADAR</button>
+</div>
+
+<div class="legend">
+    <span class="green">● Green = scan</span>
+    &nbsp;&nbsp;
+    <span class="red">● Red = detected object</span>
+</div>
+
+<script>
+
+const canvas = document.getElementById("radar");
+const ctx = canvas.getContext("2d");
+
+const centerX = canvas.width / 2;
+const centerY = canvas.height / 2;
+
+const maxRadius = 320;
+
+let angle = 0;
+let running = true;
+
+let detectedObjects = [];
+
+
+/* -----------------------------
+   DRAW RADAR BACKGROUND
+----------------------------- */
+
+function drawRadar() {
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Background
+    ctx.fillStyle = "#00150b";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Radar circles
+    ctx.strokeStyle = "#00aa44";
+    ctx.lineWidth = 2;
+
+    for (let r = 80; r <= maxRadius; r += 80) {
+
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    // Horizontal line
+    ctx.beginPath();
+    ctx.moveTo(centerX - maxRadius, centerY);
+    ctx.lineTo(centerX + maxRadius, centerY);
+    ctx.stroke();
+
+    // Vertical line
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY - maxRadius);
+    ctx.lineTo(centerX, centerY + maxRadius);
+    ctx.stroke();
+
+    // Diagonal lines
+    ctx.beginPath();
+    ctx.moveTo(
+        centerX - maxRadius * 0.707,
+        centerY - maxRadius * 0.707
+    );
+
+    ctx.lineTo(
+        centerX + maxRadius * 0.707,
+        centerY + maxRadius * 0.707
+    );
+
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(
+        centerX + maxRadius * 0.707,
+        centerY - maxRadius * 0.707
+    );
+
+    ctx.lineTo(
+        centerX - maxRadius * 0.707,
+        centerY + maxRadius * 0.707
+    );
+
+    ctx.stroke();
+
+    // Distance labels
+    ctx.fillStyle = "#00ff66";
+    ctx.font = "14px Arial";
+
+    ctx.fillText("80cm", centerX + 8, centerY - 72);
+    ctx.fillText("160cm", centerX + 8, centerY - 152);
+    ctx.fillText("240cm", centerX + 8, centerY - 232);
+    ctx.fillText("320cm", centerX + 8, centerY - 312);
+
+}
+
+
+/* -----------------------------
+   DRAW SWEEP
+----------------------------- */
+
+function drawSweep() {
+
+    const radians = (angle - 90) * Math.PI / 180;
+
+    const endX =
+        centerX + maxRadius * Math.cos(radians);
+
+    const endY =
+        centerY + maxRadius * Math.sin(radians);
+
+    // Glow
+    const gradient = ctx.createLinearGradient(
+        centerX,
+        centerY,
+        endX,
+        endY
+    );
+
+    gradient.addColorStop(0, "#00ff66");
+    gradient.addColorStop(1, "rgba(0,255,102,0)");
+
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 5;
+
+    ctx.beginPath();
+
+    ctx.moveTo(centerX, centerY);
+    ctx.lineTo(endX, endY);
+
+    ctx.stroke();
+
+    // Main sweep line
+    ctx.strokeStyle = "#00ff66";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+
+    ctx.moveTo(centerX, centerY);
+    ctx.lineTo(endX, endY);
+
+    ctx.stroke();
+}
+
+
+/* -----------------------------
+   DRAW OBJECTS
+----------------------------- */
+
+function drawObjects() {
+
+    detectedObjects.forEach(obj => {
+
+        const radians =
+            (obj.angle - 90) * Math.PI / 180;
+
+        const radius =
+            (obj.distance / 320) * maxRadius;
+
+        const x =
+            centerX + radius * Math.cos(radians);
+
+        const y =
+            centerY + radius * Math.sin(radians);
+
+        // Object glow
+        ctx.shadowBlur = 20;
+
+        if (obj.detected) {
+            ctx.shadowColor = "#ff0000";
+            ctx.fillStyle = "#ff3333";
+        } else {
+            ctx.shadowColor = "#00ff66";
+            ctx.fillStyle = "#00ff66";
+        }
+
+        // Object
+        ctx.beginPath();
+        ctx.arc(x, y, 9, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+    });
+}
+
+
+/* -----------------------------
+   SIMULATE OBJECT DETECTION
+----------------------------- */
+
+function simulateObjects() {
+
+    detectedObjects = [];
+
+    // Random object
+    if (Math.random() < 0.025) {
+
+        detectedObjects.push({
+
+            angle:
+                Math.floor(Math.random() * 160) + 10,
+
+            distance:
+                Math.floor(Math.random() * 260) + 40,
+
+            detected: true
+
+        });
+    }
+}
+
+
+/* -----------------------------
+   UPDATE DISPLAY
+----------------------------- */
+
+function updateDisplay() {
+
+    document.getElementById("angle").textContent =
+        Math.round(angle) + "°";
+
+    if (detectedObjects.length > 0) {
+
+        const obj = detectedObjects[0];
+
+        document.getElementById("distance").textContent =
+            obj.distance + " cm";
+
+        document.getElementById("object").textContent =
+            "DETECTED";
+
+        document.getElementById("object").style.color =
+            "#ff3333";
+
+        document.getElementById("status").textContent =
+            "● OBJECT DETECTED";
+
+        document.getElementById("status").style.color =
+            "#ff3333";
+
+    } else {
+
+        document.getElementById("distance").textContent =
+            "-- cm";
+
+        document.getElementById("object").textContent =
+            "NONE";
+
+        document.getElementById("object").style.color =
+            "#00ff66";
+
+        document.getElementById("status").textContent =
+            "● SCANNING";
+
+        document.getElementById("status").style.color =
+            "#00ff66";
+    }
+}
+
+
+/* -----------------------------
+   MAIN RADAR LOOP
+----------------------------- */
+
+function animate() {
+
+    drawRadar();
+
+    if (running) {
+
+        angle += 1.5;
+
+        if (angle >= 180) {
+            angle = 0;
+        }
+
+        simulateObjects();
+    }
+
+    drawSweep();
+    drawObjects();
+    updateDisplay();
+
+    requestAnimationFrame(animate);
+}
+
+
+/* -----------------------------
+   BUTTONS
+----------------------------- */
+
+function startRadar() {
+
+    running = true;
+
+    document.getElementById("status").textContent =
+        "● SCANNING";
+}
+
+
+function stopRadar() {
+
+    running = false;
+
+    detectedObjects = [];
+
+    document.getElementById("status").textContent =
+        "● RADAR STOPPED";
+
+    document.getElementById("status").style.color =
+        "#ffaa00";
+}
+
+
+/* START */
+
+animate();
+
+</script>
+
+</body>
+  </html>
